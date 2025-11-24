@@ -1,7 +1,3 @@
-// Service worker startup
-console.log('Outlook Auto Attach extension service worker started');
-console.log('Extension ID:', chrome.runtime.id);
-console.log('Manifest version:', chrome.runtime.getManifest().version);
 
 // Keep service worker alive and verify it's working
 chrome.runtime.onInstalled.addListener(() => {
@@ -28,99 +24,64 @@ function shouldProcessFile(filePath) {
   // Normalize to lowercase for comparison
   const filenameLower = filename.toLowerCase();
   
-  // Check if filename includes "Orderbekräftelse" (case-insensitive) or "1000322"
+  // Check if filename includes "Orderbekräftelse" (case-insensitive), "1000322", or "Inköp"
   const includesOrderbekraeftelse = filenameLower.includes('orderbekräftelse') || 
                                      filenameLower.includes('orderbekr');
   const includesOrderNumber = filenameLower.includes('1000322');
+  const includesInkop = filenameLower.includes('inköp') || filenameLower.includes('inkop');
   
-  const shouldProcess = includesOrderbekraeftelse || includesOrderNumber;
-  
-  console.log('📋 File filter check:', {
-    originalFilename: filename,
-    filenameLower: filenameLower,
-    includesOrderbekraeftelse: includesOrderbekraeftelse,
-    includesOrderNumber: includesOrderNumber,
-    shouldProcess: shouldProcess
-  });
+  const shouldProcess = includesOrderbekraeftelse || includesOrderNumber || includesInkop;
   
   return shouldProcess;
 }
 
 // Listen for download created events
 chrome.downloads.onCreated.addListener((downloadItem) => {
-  console.log('========== DOWNLOAD CREATED ==========');
-  console.log('Download ID:', downloadItem.id);
-  console.log('Filename:', downloadItem.filename);
-  console.log('URL:', downloadItem.url);
-  console.log('State:', downloadItem.state);
-  console.log('======================================');
   
   // Handle downloads that are already complete when created
   // (some downloads complete so fast they're already done)
   if (downloadItem.state === 'complete' && downloadItem.error === undefined) {
     const filePath = downloadItem.filename;
     if (filePath && shouldProcessFile(filePath)) {
-          console.log('🎉 Download already complete when created!');
-          console.log('📁 File path:', filePath);
-          console.log('✅ File matches filter - showing confirmation...');
           showConfirmationDialog(filePath, downloadItem.id);
     } else if (filePath) {
-          console.log('⏭️ File does not match filter criteria - skipping:', filePath);
+          console.log('File does not match filter criteria - skipping:', filePath);
     }
   }
 });
 
 // Listen for download completion events
 chrome.downloads.onChanged.addListener((downloadDelta) => {
-  console.log('========== DOWNLOAD CHANGED ==========');
-  console.log('Download ID:', downloadDelta.id);
-  console.log('State change:', downloadDelta.state);
-  console.log('Full delta:', JSON.stringify(downloadDelta, null, 2));
-  console.log('======================================');
   
   // Check if the download has completed successfully
-  if (downloadDelta.state && downloadDelta.state.current === 'complete') {
-    console.log('✅ Download state changed to COMPLETE for ID:', downloadDelta.id);
-    
+  if (downloadDelta.state && downloadDelta.state.current === 'complete') {    
     // Get the download item to retrieve the file path
     chrome.downloads.search({ id: downloadDelta.id }, (downloads) => {
-      console.log('Search results for download ID:', downloadDelta.id, '- Found:', downloads.length, 'items');
       
       if (downloads.length > 0) {
         const download = downloads[0];
-        console.log('========== DOWNLOAD DETAILS ==========');
-        console.log('ID:', download.id);
-        console.log('Filename:', download.filename);
-        console.log('State:', download.state);
-        console.log('Error:', download.error);
-        console.log('Total bytes:', download.totalBytes);
-        console.log('File size:', download.fileSize);
-        console.log('======================================');
         
         // Verify download completed successfully (not interrupted or failed)
         if (download.state === 'complete' && download.error === undefined) {
           const filePath = download.filename;
           
-          console.log('🎉 Download completed successfully!');
-          console.log('📁 File path:', filePath);
           
           // Check if file matches filter criteria before processing
           if (shouldProcessFile(filePath)) {
-            console.log('✅ File matches filter - showing confirmation...');
             // Show confirmation dialog before opening Outlook
             showConfirmationDialog(filePath, download.id);
           } else {
-            console.log('⏭️ File does not match filter criteria - skipping:', filePath);
+            console.log('File does not match filter criteria - skipping:', filePath);
           }
         } else {
-          console.error('❌ Download did not complete successfully:', {
+          console.error('Download did not complete successfully:', {
             state: download.state,
             error: download.error,
             filename: download.filename
           });
         }
       } else {
-        console.error('❌ Download not found for ID:', downloadDelta.id);
+        console.error('Download not found for ID:', downloadDelta.id);
       }
     });
   } else if (downloadDelta.state) {
@@ -192,7 +153,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const filePath = request.filePath || pendingFiles.get(request.downloadId);
     
     if (filePath) {
-      console.log('User confirmed - opening Outlook with:', filePath);
       // Clear badge
       chrome.action.setBadgeText({ text: '' });
       chrome.action.setTitle({ title: 'Outlook Auto Attach' });
@@ -211,7 +171,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'cancelOutlook') {
-    console.log('User cancelled');
     // Clear badge
     chrome.action.setBadgeText({ text: '' });
     chrome.action.setTitle({ title: 'Outlook Auto Attach' });
@@ -225,9 +184,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Function to send file path to local server
-function sendToServer(filePath) {
-  console.log('Attempting to send file to local server:', filePath);
-  
+function sendToServer(filePath) {  
   const serverUrl = 'http://localhost:8765/attach';
   
   // Send POST request to local server
@@ -241,9 +198,7 @@ function sendToServer(filePath) {
     })
   })
   .then(response => response.json())
-  .then(data => {
-    console.log('Server response:', data);
-    
+  .then(data => {    
     if (data.success) {
       // Show success notification
       chrome.notifications.create({
