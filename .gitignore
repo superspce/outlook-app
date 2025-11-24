@@ -1,0 +1,14 @@
+# Chrome extension
+*.crx
+*.pem
+
+# Icons (if you want to version control them, remove this line)
+# icons/
+
+# Native host logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,39 @@
+WINDOWS BUILD INSTRUCTIONS
+===========================
+
+För att skapa Windows executable behöver du:
+1. En Windows-dator
+2. Python 3 installerat (en gång för att bygga)
+
+BYGG WINDOWS EXECUTABLE:
+------------------------
+
+1. Öppna Command Prompt eller PowerShell på Windows
+2. Navigera till server-mappen:
+   cd "C:\path\to\chrome extension\server"
+
+3. Installera PyInstaller (en gång):
+   pip install pyinstaller
+
+4. Bygg executable:
+   build-standalone.bat
+   
+   Eller manuellt:
+   pyinstaller --onefile --name outlook-attach-server --clean outlook-attach-server.py
+
+5. Executable finns nu i: dist\outlook-attach-server.exe
+
+6. Kopiera executable till server-mappen för distribution:
+   copy dist\outlook-attach-server.exe .
+
+INSTALLATION FÖR WINDOWS-ANVÄNDARE:
+------------------------------------
+
+Användarna behöver INTE installera Python!
+
+1. Extrahera ZIP-filen
+2. Installera extension i Chrome (Load unpacked)
+3. Kör: cd server && install-standalone.bat
+
+Det är allt! Executable innehåller allt.
+
