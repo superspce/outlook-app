@@ -25,6 +25,13 @@ jobs:
         pip install pyinstaller
         pip install pywin32
     
+    - name: Clean previous builds
+      working-directory: ./server
+      run: |
+        if exist dist rmdir /s /q dist
+        if exist build rmdir /s /q build
+        if exist *.spec del /q *.spec
+    
     - name: Build Windows GUI launcher
       working-directory: ./server
       run: |
