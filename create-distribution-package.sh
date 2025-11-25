@@ -50,8 +50,43 @@ fi
 
 # Copy server launcher (Windows)
 echo "🪟 Copying Windows server launcher..."
-if [ -f "server/dist/Outlook Auto Attach Server.exe" ]; then
-    cp "server/dist/Outlook Auto Attach Server.exe" "$DIST_DIR/Server/Windows/"
+# Check for Windows files in dist/server first (user added files here)
+if [ -f "dist/server/Outlook Auto Attach Server.exe" ] && [ -d "dist/server/_internal" ]; then
+    # Create folder structure and copy Windows files
+    mkdir -p "$DIST_DIR/Server/Windows/Outlook Auto Attach Server"
+    cp "dist/server/Outlook Auto Attach Server.exe" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+    cp -R "dist/server/_internal" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+    echo "   ✅ Copied Windows .exe and _internal folder"
+# Check if we have the full Windows folder structure (from GitHub Actions artifact)
+elif [ -d "dist/server/Outlook Auto Attach Server" ]; then
+    cp -R "dist/server/Outlook Auto Attach Server" "$DIST_DIR/Server/Windows/"
+    echo "   ✅ Copied Windows folder with _internal"
+elif [ -d "server/dist/Outlook Auto Attach Server" ]; then
+    # Check if this is Windows (has .exe) or Mac (has .app-like structure)
+    if [ -f "server/dist/Outlook Auto Attach Server/Outlook Auto Attach Server.exe" ]; then
+        cp -R "server/dist/Outlook Auto Attach Server" "$DIST_DIR/Server/Windows/"
+        echo "   ✅ Copied Windows folder with _internal"
+    fi
+elif [ -f "dist/server/Outlook Auto Attach Server.exe" ]; then
+    # .exe file found - create folder structure
+    mkdir -p "$DIST_DIR/Server/Windows/Outlook Auto Attach Server"
+    cp "dist/server/Outlook Auto Attach Server.exe" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+    echo "   ✅ Copied .exe file"
+    # Check for _internal folder in same directory
+    if [ -d "dist/server/_internal" ]; then
+        cp -R "dist/server/_internal" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+        echo "   ✅ Copied _internal folder"
+    elif [ -d "dist/server/Outlook Auto Attach Server/_internal" ]; then
+        cp -R "dist/server/Outlook Auto Attach Server/_internal" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+        echo "   ✅ Copied _internal folder"
+    else
+        echo "   ⚠️  WARNING: Missing _internal folder!"
+        echo "   💡 Make sure _internal folder is in dist/server/ or dist/server/Outlook Auto Attach Server/"
+    fi
+elif [ -f "server/dist/Outlook Auto Attach Server.exe" ]; then
+    mkdir -p "$DIST_DIR/Server/Windows/Outlook Auto Attach Server"
+    cp "server/dist/Outlook Auto Attach Server.exe" "$DIST_DIR/Server/Windows/Outlook Auto Attach Server/"
+    echo "   ⚠️  Copied .exe only - Windows users need _internal folder!"
 elif [ -f "dist/server/outlook-attach-server.exe" ]; then
     cp "dist/server/outlook-attach-server.exe" "$DIST_DIR/Server/Windows/"
 fi

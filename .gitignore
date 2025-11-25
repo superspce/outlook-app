@@ -21,3 +21,6 @@ server/dist/
 *.zip
 dist-package/
 
+# Windows build artifacts (local)
+dist/server/
+
