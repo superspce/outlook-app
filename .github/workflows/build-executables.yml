@@ -1,0 +1,109 @@
+name: Build Native Host Executables
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install PyInstaller
+        run: python -m pip install pyinstaller
+      
+      - name: Build Windows executable
+        working-directory: ./server
+        run: |
+          pyinstaller --onefile --name outlook-attach-native-host --clean --noconfirm outlook-attach-native-host.py
+      
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: outlook-attach-native-host-windows
+          path: server/dist/outlook-attach-native-host.exe
+          retention-days: 30
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install PyInstaller
+        run: python3 -m pip install pyinstaller
+      
+      - name: Build Mac executable
+        working-directory: ./server
+        run: |
+          pyinstaller --onefile --name outlook-attach-native-host --clean --noconfirm outlook-attach-native-host.py
+      
+      - name: Upload Mac executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: outlook-attach-native-host-mac
+          path: server/dist/outlook-attach-native-host
+          retention-days: 30
+
+  create-release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - name: Download Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          name: outlook-attach-native-host-windows
+          path: ./artifacts/windows
+      
+      - name: Download Mac executable
+        uses: actions/download-artifact@v4
+        with:
+          name: outlook-attach-native-host-mac
+          path: ./artifacts/mac
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Create distribution package
+        run: |
+          mkdir -p dist-package/server/dist
+          cp artifacts/windows/outlook-attach-native-host.exe dist-package/server/dist/ 2>/dev/null || true
+          cp artifacts/mac/outlook-attach-native-host dist-package/server/dist/ 2>/dev/null || true
+          cp server/install-native-host.sh dist-package/server/
+          cp server/install-native-host.bat dist-package/server/
+          cp server/outlook-attach-native-host.py dist-package/server/
+          cp server/outlook-attach-native-host.bat dist-package/server/
+          cp server/outlook-attach-native-host-wrapper.sh dist-package/server/ 2>/dev/null || true
+          mkdir -p dist-package/extension
+          cp manifest.json background.js popup.html popup.js dist-package/extension/
+          cp -r icons dist-package/extension/
+          cp README.txt dist-package/ 2>/dev/null || true
+      
+      - name: Create ZIP
+        run: |
+          cd dist-package
+          zip -r ../outlook-auto-attach-package.zip . -q
+      
+      - name: Upload distribution package
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-package
+          path: outlook-auto-attach-package.zip
+          retention-days: 30
+

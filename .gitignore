@@ -1,26 +1,37 @@
-# Chrome extension
-*.crx
-*.pem
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
 
-# Icons (if you want to version control them, remove this line)
-# icons/
-
-# Native host logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-server/build/
-server/dist/
+# PyInstaller
 *.spec
+build/
+dist/
+*.egg-info/
 
 # Distribution packages
 *.zip
 dist-package/
+outlook-auto-attach-package*.zip
 
-# Windows build artifacts (local)
-dist/server/
+# OS
+.DS_Store
+Thumbs.db
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Native messaging wrapper (generated)
+outlook-attach-native-host-wrapper.sh
