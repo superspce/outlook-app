@@ -200,54 +200,74 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Function to send file path to local server
-function sendToServer(filePath) {  
-  const serverUrl = 'http://localhost:8765/attach';
+// Function to send file path to native messaging host
+function sendToServer(filePath) {
+  const nativeHostName = 'com.outlookautoattach.host';
   
-  // Send POST request to local server
-  fetch(serverUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ 
+  console.log('Sending file to native host:', filePath);
+  
+  // Send message to native messaging host
+  chrome.runtime.sendNativeMessage(
+    nativeHostName,
+    {
+      action: 'attach',
       filePath: filePath
-    })
-  })
-  .then(response => response.json())
-  .then(data => {    
-    if (data.success) {
-      // Show success notification
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon48.png',
-        title: 'Outlook Auto Attach',
-        message: 'Opening Outlook with attached file...'
-      }, (notificationId) => {
-        console.log('Success notification shown:', notificationId);
-      });
-    } else {
-      // Show error notification
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon48.png',
-        title: 'Outlook Auto Attach',
-        message: `Failed to open Outlook: ${data.message || 'Unknown error'}`
-      }, (notificationId) => {
-        console.log('Error notification shown:', notificationId);
-      });
+    },
+    (response) => {
+      console.log('Native messaging response:', response);
+      console.log('Chrome runtime lastError:', chrome.runtime.lastError);
+      
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message || 'Native host not installed or not running';
+        console.error('Native messaging error:', chrome.runtime.lastError);
+        // Show error notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Outlook Auto Attach - Error',
+          message: `Failed to connect: ${errorMsg}`
+        }, (notificationId) => {
+          console.log('Error notification shown:', notificationId, 'Message:', errorMsg);
+        });
+        return;
+      }
+      
+      if (!response) {
+        console.error('No response from native host');
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Outlook Auto Attach - Error',
+          message: 'No response from native host'
+        });
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log('Success! Outlook should be opening...');
+        // Show success notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Outlook Auto Attach',
+          message: 'Opening Outlook with attached file...'
+        }, (notificationId) => {
+          console.log('Success notification shown:', notificationId);
+        });
+      } else {
+        const errorMsg = response?.message || 'Unknown error';
+        console.error('Failed to open Outlook:', errorMsg);
+        // Show error notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Outlook Auto Attach - Error',
+          message: `Failed to open Outlook: ${errorMsg}`
+        }, (notificationId) => {
+          console.log('Error notification shown:', notificationId, 'Message:', errorMsg);
+        });
+      }
     }
-  })
-  .catch(error => {    
-    // Show error notification
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Outlook Auto Attach',
-      message: 'Failed to connect to local server. Make sure the server is running.'
-    }, (notificationId) => {
-      console.log('Error notification shown:', notificationId);
-    });
-  });
+  );
 }
 
