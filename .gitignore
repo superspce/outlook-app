@@ -19,6 +19,7 @@ dist/
 *.zip
 dist-package/
 outlook-auto-attach-package*.zip
+installer/
 
 # OS
 .DS_Store
@@ -32,6 +33,3 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Native messaging wrapper (generated)
-outlook-attach-native-host-wrapper.sh
