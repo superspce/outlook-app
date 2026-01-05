@@ -10,7 +10,7 @@ echo Building Outlook Auto Attach standalone executable...
 echo.
 
 REM Check if PyInstaller is installed
-where pyinstaller >nul 2>&1
+python -m PyInstaller --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo PyInstaller not found. Installing...
     python -m pip install pyinstaller
@@ -31,7 +31,7 @@ if exist "ct_food_app_logo.png" (
     REM For now, we'll just include the PNG and use it in the app
 )
 
-pyinstaller --onefile ^
+python -m PyInstaller --onefile ^
     --name outlook-auto-attach ^
     --clean ^
     --noconfirm ^
