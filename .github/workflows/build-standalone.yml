@@ -1,0 +1,123 @@
+name: Build Standalone Applications
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: ./standalone
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pywin32 pyinstaller
+      
+      - name: Build Windows executable
+        working-directory: ./standalone
+        run: |
+          python -m PyInstaller --onefile --name outlook-auto-attach --clean --noconfirm --add-data "requirements.txt;." --add-data "ct_food_app_logo.png;." --hidden-import win32timezone --hidden-import pystray._win32 --hidden-import platform outlook-auto-attach-standalone.py
+      
+      - name: Create installer package
+        working-directory: ./standalone
+        run: |
+          if not exist "dist-installer" mkdir dist-installer
+          copy "dist\outlook-auto-attach.exe" "dist-installer\outlook-auto-attach.exe"
+          REM Create simple install script
+          echo @echo off > dist-installer\Install.bat
+          echo setlocal >> dist-installer\Install.bat
+          echo set APP_NAME=CT Food Outlook >> dist-installer\Install.bat
+          echo set APP_EXE=outlook-auto-attach.exe >> dist-installer\Install.bat
+          echo set INSTALL_DIR=%%ProgramFiles%%\%%APP_NAME%% >> dist-installer\Install.bat
+          echo net session ^>nul 2^>^&1 >> dist-installer\Install.bat
+          echo if errorlevel 1 ^( >> dist-installer\Install.bat
+          echo     echo ERROR: Must run as Administrator! >> dist-installer\Install.bat
+          echo     pause >> dist-installer\Install.bat
+          echo     exit /b 1 >> dist-installer\Install.bat
+          echo ^) >> dist-installer\Install.bat
+          echo if not exist "%%INSTALL_DIR%%" mkdir "%%INSTALL_DIR%%" >> dist-installer\Install.bat
+          echo copy "%%APP_EXE%%" "%%INSTALL_DIR%%\" /Y >> dist-installer\Install.bat
+          echo set SCRIPT=%%TEMP%%\shortcut.vbs >> dist-installer\Install.bat
+          echo Set oWS = WScript.CreateObject^("WScript.Shell"^) > %%SCRIPT%% >> dist-installer\Install.bat
+          echo sLinkFile = "%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\%%APP_NAME%%.lnk" >> %%SCRIPT%% >> dist-installer\Install.bat
+          echo Set oLink = oWS.CreateShortcut^(sLinkFile^) >> %%SCRIPT%% >> dist-installer\Install.bat
+          echo oLink.TargetPath = "%%INSTALL_DIR%%\%%APP_EXE%%" >> %%SCRIPT%% >> dist-installer\Install.bat
+          echo oLink.Save >> %%SCRIPT%% >> dist-installer\Install.bat
+          echo cscript /nologo %%SCRIPT%% >> dist-installer\Install.bat
+          echo del %%SCRIPT%% >> dist-installer\Install.bat
+          echo start "" "%%INSTALL_DIR%%\%%APP_EXE%%" >> dist-installer\Install.bat
+          echo echo Installation complete! >> dist-installer\Install.bat
+          echo pause ^>nul >> dist-installer\Install.bat
+      
+      - name: Create ZIP package
+        working-directory: ./standalone
+        run: |
+          powershell -Command "Compress-Archive -Path 'dist-installer\*' -DestinationPath 'CT-Food-Outlook-Windows.zip' -Force"
+      
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CT-Food-Outlook-Windows
+          path: standalone/CT-Food-Outlook-Windows.zip
+          retention-days: 30
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: ./standalone
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install pyinstaller
+      
+      - name: Create icon
+        working-directory: ./standalone
+        run: |
+          chmod +x create-icon.sh
+          ./create-icon.sh
+      
+      - name: Build macOS application
+        working-directory: ./standalone
+        run: |
+          python3 -m PyInstaller --windowed --name "CT Food Outlook" --clean --noconfirm --add-data "requirements.txt:." --add-data "ct_food_app_logo.png:." --hidden-import pystray._darwin --icon=CTFood.icns outlook-auto-attach-standalone.py
+      
+      - name: Fix app icon
+        working-directory: ./standalone
+        run: |
+          chmod +x fix-app-icon.sh
+          ./fix-app-icon.sh
+      
+      - name: Create DMG
+        working-directory: ./standalone
+        run: |
+          chmod +x create-dmg.sh
+          ./create-dmg.sh
+      
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CT-Food-Outlook-macOS
+          path: standalone/dist/CT Food Outlook.dmg
+          retention-days: 30
