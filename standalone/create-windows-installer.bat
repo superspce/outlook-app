@@ -23,7 +23,7 @@ mkdir "%INSTALLER_DIR%"
 REM Copy executable
 copy "dist\%APP_EXE%" "%INSTALLER_DIR%\%APP_EXE%"
 
-REM
+REM Copy the pre-made install script (simpler and tested)
 if exist "Install.bat" (
     copy "Install.bat" "%INSTALLER_DIR%\Install.bat"
 ) else (

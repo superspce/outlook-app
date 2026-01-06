@@ -33,34 +33,11 @@ jobs:
       
       - name: Create installer package
         working-directory: ./standalone
+        shell: cmd
         run: |
           if not exist "dist-installer" mkdir dist-installer
           copy "dist\outlook-auto-attach.exe" "dist-installer\outlook-auto-attach.exe"
-          REM Create simple install script
-          echo @echo off > dist-installer\Install.bat
-          echo setlocal >> dist-installer\Install.bat
-          echo set APP_NAME=CT Food Outlook >> dist-installer\Install.bat
-          echo set APP_EXE=outlook-auto-attach.exe >> dist-installer\Install.bat
-          echo set INSTALL_DIR=%%ProgramFiles%%\%%APP_NAME%% >> dist-installer\Install.bat
-          echo net session ^>nul 2^>^&1 >> dist-installer\Install.bat
-          echo if errorlevel 1 ^( >> dist-installer\Install.bat
-          echo     echo ERROR: Must run as Administrator! >> dist-installer\Install.bat
-          echo     pause >> dist-installer\Install.bat
-          echo     exit /b 1 >> dist-installer\Install.bat
-          echo ^) >> dist-installer\Install.bat
-          echo if not exist "%%INSTALL_DIR%%" mkdir "%%INSTALL_DIR%%" >> dist-installer\Install.bat
-          echo copy "%%APP_EXE%%" "%%INSTALL_DIR%%\" /Y >> dist-installer\Install.bat
-          echo set SCRIPT=%%TEMP%%\shortcut.vbs >> dist-installer\Install.bat
-          echo Set oWS = WScript.CreateObject^("WScript.Shell"^) > %%SCRIPT%% >> dist-installer\Install.bat
-          echo sLinkFile = "%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\%%APP_NAME%%.lnk" >> %%SCRIPT%% >> dist-installer\Install.bat
-          echo Set oLink = oWS.CreateShortcut^(sLinkFile^) >> %%SCRIPT%% >> dist-installer\Install.bat
-          echo oLink.TargetPath = "%%INSTALL_DIR%%\%%APP_EXE%%" >> %%SCRIPT%% >> dist-installer\Install.bat
-          echo oLink.Save >> %%SCRIPT%% >> dist-installer\Install.bat
-          echo cscript /nologo %%SCRIPT%% >> dist-installer\Install.bat
-          echo del %%SCRIPT%% >> dist-installer\Install.bat
-          echo start "" "%%INSTALL_DIR%%\%%APP_EXE%%" >> dist-installer\Install.bat
-          echo echo Installation complete! >> dist-installer\Install.bat
-          echo pause ^>nul >> dist-installer\Install.bat
+          copy "Install.bat" "dist-installer\Install.bat"
       
       - name: Create ZIP package
         working-directory: ./standalone
