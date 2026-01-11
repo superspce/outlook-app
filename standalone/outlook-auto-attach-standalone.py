@@ -251,6 +251,18 @@ class DownloadsHandler(FileSystemEventHandler):
                 logger.error(f"Failed to create copy of: {file_path}")
                 return
             
+            # Delete the original file from Downloads folder (keep Downloads clean)
+            # Only delete if the copy was successful and it's different from the original
+            if unique_file_path != file_path and os.path.exists(unique_file_path):
+                try:
+                    # Wait a moment to ensure file is not locked
+                    time.sleep(0.5)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info(f"Deleted original file from Downloads: {filename}")
+                except (PermissionError, OSError) as e:
+                    logger.warning(f"Could not delete original file {filename}: {e}")
+            
             # Open Outlook with file attached
             success, message = open_outlook(unique_file_path)
             if success:

@@ -3,6 +3,7 @@ REM Simple installer for CT Food Outlook
 REM Right-click and "Run as Administrator"
 
 setlocal
+cd /D "%~dp0"
 
 set APP_NAME=CT Food Outlook
 set APP_EXE=outlook-auto-attach.exe
@@ -73,7 +74,7 @@ cscript /nologo "%SCRIPT%"
 del "%SCRIPT%"
 
 echo.
-echo ✅ Installation successful!
+echo Installation successful!
 echo.
 echo The app is now in Start Menu: %APP_NAME%
 echo.
