@@ -239,9 +239,12 @@ class DownloadsHandler(FileSystemEventHandler):
         """Check if file should be processed (not already processed or pending). Uses file signature (path + mtime)."""
         signature = self._get_file_signature(file_path)
         with self.processing_lock:
-            # Check if this exact file (same path + same modification time) was already processed
+            # Check if this exact file (same path + same modification time) was already processed or is being processed
             if signature in self.processed_files:
-                return False
+                processed_time, _ = self.processed_files[signature]
+                # If processed very recently (within last 10 seconds), it's likely being processed by another thread
+                if time.time() - processed_time < 10.0:
+                    return False
             
             # Clean up old entries for files that no longer exist or have been modified
             keys_to_remove = []
@@ -250,14 +253,14 @@ class DownloadsHandler(FileSystemEventHandler):
                 if not os.path.exists(stored_path):
                     # File was deleted, remove from processed set
                     keys_to_remove.append(key)
-                elif stored_path == file_path:
+                elif stored_path == file_path and stored_mtime != signature[1]:
                     # Same path but different mtime means it's a new file with same name
                     keys_to_remove.append(key)
             
             for key in keys_to_remove:
                 del self.processed_files[key]
             
-            # Mark this file as being processed
+            # Mark this file as being processed (with current timestamp)
             self.processed_files[signature] = (time.time(), signature[1])
         return True
     
@@ -330,6 +333,10 @@ class DownloadsHandler(FileSystemEventHandler):
             if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
                 return
             
+            # Skip if already processed (check BEFORE tracking as pending)
+            if not self._should_process(file_path):
+                return
+            
             # Track pending files (might be still downloading)
             current_time = time.time()
             with self.pending_lock:
@@ -338,12 +345,10 @@ class DownloadsHandler(FileSystemEventHandler):
                     # Only process if file hasn't been modified recently (likely complete)
                     if current_time - last_seen < 2.0:  # File modified less than 2 seconds ago
                         self.pending_files[file_path] = current_time  # Update timestamp
+                        # Remove from processed set since we're not processing it yet
+                        self._mark_as_not_processed(file_path)
                         return  # Still downloading, wait
                 self.pending_files[file_path] = current_time
-            
-            # Skip if already processed
-            if not self._should_process(file_path):
-                return
             
             # Process with delay to ensure file is complete
             logger.debug(f"File modified event: {filename}")
@@ -362,6 +367,22 @@ class DownloadsHandler(FileSystemEventHandler):
             self._mark_as_not_processed(file_path)
             return
         
+        # Double-check this file hasn't been processed by another thread while we were waiting
+        signature = self._get_file_signature(file_path)
+        with self.processing_lock:
+            # If file signature is already in processed_files, it's being processed or was already processed
+            # Check if it was recently marked (within last 5 seconds) - likely being processed by another thread
+            if signature in self.processed_files:
+                processed_time, _ = self.processed_files[signature]
+                if time.time() - processed_time < 5.0:
+                    logger.debug(f"File already being processed by another thread: {os.path.basename(file_path)}")
+                    return
+                # Old entry, might be a different file - remove it
+                del self.processed_files[signature]
+            
+            # Re-mark as being processed (in case multiple threads reached here)
+            self.processed_files[signature] = (time.time(), signature[1])
+        
         # Try to open file to ensure it's not locked
         try:
             with open(file_path, 'rb'):
@@ -371,7 +392,7 @@ class DownloadsHandler(FileSystemEventHandler):
             self._mark_as_not_processed(file_path)
             return
         
-        # Process the file (only mark as processed after successful processing)
+        # Process the file
         try:
             self.process_file(file_path)
         except Exception as e:
