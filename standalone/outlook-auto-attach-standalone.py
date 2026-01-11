@@ -126,13 +126,34 @@ def open_outlook_windows(file_path):
         file_path = os.path.abspath(file_path)
         file_path = file_path.replace('/', '\\')
         
-        outlook = win32com.client.Dispatch("Outlook.Application")
-        mail_item = outlook.CreateItem(0)  # 0 = olMailItem
-        mail_item.Attachments.Add(file_path)
-        mail_item.Display()
+        # Try to get existing Outlook instance first, or create new one
+        outlook = None
+        try:
+            outlook = win32com.client.GetActiveObject("Outlook.Application")
+            logger.info("Using existing Outlook instance")
+        except:
+            pass
         
-        logger.info(f"Successfully opened Outlook with file: {file_path}")
-        return True, "Outlook opened successfully"
+        if outlook is None:
+            outlook = win32com.client.Dispatch("Outlook.Application")
+            logger.info("Created new Outlook instance")
+        
+        # Create email with attachment (retry up to 3 times)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                mail_item = outlook.CreateItem(0)  # 0 = olMailItem
+                mail_item.Attachments.Add(file_path)
+                mail_item.Display()
+                logger.info(f"Successfully opened Outlook with file: {file_path}")
+                return True, "Outlook opened successfully"
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Outlook opening attempt {attempt + 1} failed, retrying: {e}")
+                    time.sleep(0.5)
+                    continue
+                else:
+                    raise
         
     except Exception as e:
         logger.error(f"Error opening Outlook: {e}")
@@ -195,12 +216,14 @@ def open_outlook(file_path):
 class DownloadsHandler(FileSystemEventHandler):
     """Handle file system events in Downloads folder."""
     
-    def __init__(self):
+    def __init__(self, downloads_folder):
         super().__init__()
         self.processed_files = set()
         self.pending_files = {}  # file_path -> last_seen_time
         self.processing_lock = threading.Lock()
         self.pending_lock = threading.Lock()
+        self.downloads_folder = downloads_folder
+        self.last_scan_time = time.time()
     
     def _wait_for_file_stable(self, file_path, wait_seconds=2.0, check_interval=0.2):
         """Wait for file to be stable (size doesn't change) before processing."""
@@ -371,7 +394,64 @@ class DownloadsHandler(FileSystemEventHandler):
                 logger.error(f"Failed to open Outlook: {message}")
                 
         except Exception as e:
-            logger.error(f"Error processing file {file_path}: {e}")
+            logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
+    
+    def scan_for_new_files(self):
+        """Periodic scan for files that might have been missed by file system events."""
+        try:
+            if not os.path.exists(self.downloads_folder):
+                return
+            
+            current_time = time.time()
+            # Only scan if it's been at least 5 seconds since last scan
+            if current_time - self.last_scan_time < 5.0:
+                return
+            
+            self.last_scan_time = current_time
+            
+            try:
+                files = os.listdir(self.downloads_folder)
+                for filename in files:
+                    file_path = os.path.join(self.downloads_folder, filename)
+                    
+                    # Skip directories and temporary files
+                    if os.path.isdir(file_path):
+                        continue
+                    if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+                        continue
+                    
+                    # Check if it's a file we should process
+                    if not should_process_file(filename):
+                        continue
+                    
+                    # Check if already processed
+                    with self.processing_lock:
+                        if file_path in self.processed_files:
+                            continue
+                    
+                    # Check file modification time (only process files older than 3 seconds - likely complete)
+                    try:
+                        file_mtime = os.path.getmtime(file_path)
+                        if current_time - file_mtime < 3.0:
+                            continue  # File too recent, might still be downloading
+                    except:
+                        continue
+                    
+                    # Check if file is stable (not locked)
+                    try:
+                        with open(file_path, 'rb'):
+                            pass
+                    except (PermissionError, IOError):
+                        continue  # File is locked, skip
+                    
+                    # Process this file
+                    logger.info(f"Periodic scan found file: {filename}")
+                    if self._should_process(file_path):
+                        threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
+            except Exception as e:
+                logger.debug(f"Error during periodic scan: {e}")
+        except Exception as e:
+            logger.debug(f"Error in scan_for_new_files: {e}")
 
 
 def create_tray_icon():
@@ -519,7 +599,7 @@ def main():
     logger.info(f"Monitoring folder: {downloads_folder}")
     
     # Setup file system watcher
-    event_handler = DownloadsHandler()
+    event_handler = DownloadsHandler(downloads_folder)
     observer = Observer()
     observer.schedule(event_handler, downloads_folder, recursive=False)
     observer.start()
@@ -534,9 +614,11 @@ def main():
     icon_thread.start()
     
     try:
-        # Keep the main thread alive
+        # Keep the main thread alive and periodically scan for missed files
         while observer.is_alive():
             time.sleep(1)
+            # Periodic scan as fallback in case file system events are missed
+            event_handler.scan_for_new_files()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
