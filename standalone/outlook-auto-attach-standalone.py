@@ -225,44 +225,6 @@ class DownloadsHandler(FileSystemEventHandler):
         self.downloads_folder = downloads_folder
         self.last_scan_time = time.time()
     
-    def _wait_for_file_stable(self, file_path, wait_seconds=2.0, check_interval=0.2):
-        """Wait for file to be stable (size doesn't change) before processing."""
-        if not os.path.exists(file_path):
-            return False
-        
-        try:
-            last_size = os.path.getsize(file_path)
-            checks = int(wait_seconds / check_interval)
-            
-            for _ in range(checks):
-                time.sleep(check_interval)
-                if not os.path.exists(file_path):
-                    return False
-                current_size = os.path.getsize(file_path)
-                if current_size == last_size:
-                    # File size is stable, wait one more check to be sure
-                    time.sleep(check_interval)
-                    if os.path.getsize(file_path) == current_size:
-                        # Try to open the file to ensure it's not locked
-                        try:
-                            with open(file_path, 'rb'):
-                                pass
-                            return True
-                        except (PermissionError, IOError):
-                            continue
-                last_size = current_size
-            
-            # File size kept changing, but try to process anyway if accessible
-            try:
-                with open(file_path, 'rb'):
-                    pass
-                return True
-            except (PermissionError, IOError):
-                return False
-        except Exception as e:
-            logger.debug(f"Error checking file stability: {e}")
-            return False
-    
     def _should_process(self, file_path):
         """Check if file should be processed (not already processed or pending)."""
         with self.processing_lock:
@@ -289,7 +251,8 @@ class DownloadsHandler(FileSystemEventHandler):
             return
         
         # Process in a separate thread to avoid blocking
-        threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
+        logger.info(f"File created event: {filename}")
+        threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
     
     def on_moved(self, event):
         """Called when a file is moved/renamed (browsers often rename temp files)."""
@@ -308,7 +271,8 @@ class DownloadsHandler(FileSystemEventHandler):
             return
         
         # Process the renamed file
-        threading.Thread(target=self._process_file_delayed, args=(dest_path, 1.0), daemon=True).start()
+        logger.info(f"File moved/renamed event: {filename}")
+        threading.Thread(target=self._process_file_delayed, args=(dest_path, 2.0), daemon=True).start()
     
     def on_modified(self, event):
         """Called when a file is modified (sometimes triggered on download completion)."""
@@ -338,29 +302,50 @@ class DownloadsHandler(FileSystemEventHandler):
             return
         
         # Process with delay to ensure file is complete
-        threading.Thread(target=self._process_file_delayed, args=(file_path, 1.5), daemon=True).start()
+        logger.debug(f"File modified event: {filename}")
+        threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
     
-    def _process_file_delayed(self, file_path, initial_delay=1.0):
-        """Process file after a delay and file stability check."""
-        # Initial delay
+    def _process_file_delayed(self, file_path, initial_delay=2.0):
+        """Process file after a delay to ensure it's complete."""
+        # Wait for file to be complete (browsers need time to finish writing)
         time.sleep(initial_delay)
         
-        # Wait for file to be stable
-        if not self._wait_for_file_stable(file_path, wait_seconds=2.0):
-            logger.warning(f"File not stable, skipping: {os.path.basename(file_path)}")
-            # Remove from processed set so it can be retried
+        # Check if file still exists and can be opened
+        if not os.path.exists(file_path):
+            logger.debug(f"File no longer exists: {os.path.basename(file_path)}")
             with self.processing_lock:
                 self.processed_files.discard(file_path)
             return
         
-        # Process the file
-        self.process_file(file_path)
+        # Try to open file to ensure it's not locked
+        try:
+            with open(file_path, 'rb'):
+                pass
+        except (PermissionError, IOError) as e:
+            logger.debug(f"File still locked, skipping: {os.path.basename(file_path)}")
+            with self.processing_lock:
+                self.processed_files.discard(file_path)
+            return
+        
+        # Process the file (only mark as processed after successful processing)
+        try:
+            self.process_file(file_path)
+        except Exception as e:
+            logger.error(f"Error in process_file: {e}")
+            # Remove from processed set so it can be retried
+            with self.processing_lock:
+                self.processed_files.discard(file_path)
     
     def process_file(self, file_path):
         """Process a downloaded file."""
+        filename = os.path.basename(file_path)
+        logger.info(f"Processing file: {filename}")
+        
         try:
-            filename = os.path.basename(file_path)
-            logger.info(f"Checking file: {filename}")
+            # Double-check file still exists
+            if not os.path.exists(file_path):
+                logger.warning(f"File no longer exists: {filename}")
+                return
             
             if not should_process_file(filename):
                 logger.debug(f"File does not match criteria: {filename}")
@@ -378,8 +363,8 @@ class DownloadsHandler(FileSystemEventHandler):
             # Only delete if the copy was successful and it's different from the original
             if unique_file_path != file_path and os.path.exists(unique_file_path):
                 try:
-                    # Wait a moment to ensure file is not locked
-                    time.sleep(0.5)
+                    # Small delay to ensure copy is complete
+                    time.sleep(0.3)
                     if os.path.exists(file_path):
                         os.remove(file_path)
                         logger.info(f"Deleted original file from Downloads: {filename}")
@@ -395,6 +380,7 @@ class DownloadsHandler(FileSystemEventHandler):
                 
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
+            raise  # Re-raise so caller can handle it
     
     def scan_for_new_files(self):
         """Periodic scan for files that might have been missed by file system events."""
@@ -403,8 +389,8 @@ class DownloadsHandler(FileSystemEventHandler):
                 return
             
             current_time = time.time()
-            # Only scan if it's been at least 5 seconds since last scan
-            if current_time - self.last_scan_time < 5.0:
+            # Scan every 3 seconds (more aggressive to catch missed files)
+            if current_time - self.last_scan_time < 3.0:
                 return
             
             self.last_scan_time = current_time
@@ -429,10 +415,10 @@ class DownloadsHandler(FileSystemEventHandler):
                         if file_path in self.processed_files:
                             continue
                     
-                    # Check file modification time (only process files older than 3 seconds - likely complete)
+                    # Check file modification time (only process files older than 2 seconds - likely complete)
                     try:
                         file_mtime = os.path.getmtime(file_path)
-                        if current_time - file_mtime < 3.0:
+                        if current_time - file_mtime < 2.0:
                             continue  # File too recent, might still be downloading
                     except:
                         continue
