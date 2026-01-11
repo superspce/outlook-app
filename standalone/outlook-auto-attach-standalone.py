@@ -239,12 +239,9 @@ class DownloadsHandler(FileSystemEventHandler):
         """Check if file should be processed (not already processed or pending). Uses file signature (path + mtime)."""
         signature = self._get_file_signature(file_path)
         with self.processing_lock:
-            # Check if this exact file (same path + same modification time) was already processed or is being processed
+            # Check if this exact file (same path + same modification time) was already processed
             if signature in self.processed_files:
-                processed_time, _ = self.processed_files[signature]
-                # If processed very recently (within last 10 seconds), it's likely being processed by another thread
-                if time.time() - processed_time < 10.0:
-                    return False
+                return False
             
             # Clean up old entries for files that no longer exist or have been modified
             keys_to_remove = []
@@ -260,7 +257,7 @@ class DownloadsHandler(FileSystemEventHandler):
             for key in keys_to_remove:
                 del self.processed_files[key]
             
-            # Mark this file as being processed (with current timestamp)
+            # Mark this file as being processed
             self.processed_files[signature] = (time.time(), signature[1])
         return True
     
@@ -366,22 +363,6 @@ class DownloadsHandler(FileSystemEventHandler):
             logger.debug(f"File no longer exists: {os.path.basename(file_path)}")
             self._mark_as_not_processed(file_path)
             return
-        
-        # Double-check this file hasn't been processed by another thread while we were waiting
-        signature = self._get_file_signature(file_path)
-        with self.processing_lock:
-            # If file signature is already in processed_files, it's being processed or was already processed
-            # Check if it was recently marked (within last 5 seconds) - likely being processed by another thread
-            if signature in self.processed_files:
-                processed_time, _ = self.processed_files[signature]
-                if time.time() - processed_time < 5.0:
-                    logger.debug(f"File already being processed by another thread: {os.path.basename(file_path)}")
-                    return
-                # Old entry, might be a different file - remove it
-                del self.processed_files[signature]
-            
-            # Re-mark as being processed (in case multiple threads reached here)
-            self.processed_files[signature] = (time.time(), signature[1])
         
         # Try to open file to ensure it's not locked
         try:
