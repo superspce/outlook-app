@@ -26,6 +26,7 @@ SYSTEM = platform.system()
 if SYSTEM == 'Windows':
     try:
         import win32com.client
+        import pythoncom
     except ImportError:
         print("Error: pywin32 not installed. Please install it: pip install pywin32")
         sys.exit(1)
@@ -112,6 +113,14 @@ def open_outlook_windows(file_path):
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
         return False, f"File not found: {file_path}"
+    
+    # Initialize COM for this thread (required when called from background threads like watchdog)
+    # CoInitialize() uses apartment-threaded model (required for Outlook automation)
+    try:
+        pythoncom.CoInitialize()
+    except Exception:
+        # COM already initialized in this thread, that's fine - continue
+        pass
     
     try:
         file_path = os.path.abspath(file_path)
