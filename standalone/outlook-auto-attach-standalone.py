@@ -198,25 +198,94 @@ class DownloadsHandler(FileSystemEventHandler):
     def __init__(self):
         super().__init__()
         self.processed_files = set()
+        self.pending_files = {}  # file_path -> last_seen_time
         self.processing_lock = threading.Lock()
+        self.pending_lock = threading.Lock()
+    
+    def _wait_for_file_stable(self, file_path, wait_seconds=2.0, check_interval=0.2):
+        """Wait for file to be stable (size doesn't change) before processing."""
+        if not os.path.exists(file_path):
+            return False
+        
+        try:
+            last_size = os.path.getsize(file_path)
+            checks = int(wait_seconds / check_interval)
+            
+            for _ in range(checks):
+                time.sleep(check_interval)
+                if not os.path.exists(file_path):
+                    return False
+                current_size = os.path.getsize(file_path)
+                if current_size == last_size:
+                    # File size is stable, wait one more check to be sure
+                    time.sleep(check_interval)
+                    if os.path.getsize(file_path) == current_size:
+                        # Try to open the file to ensure it's not locked
+                        try:
+                            with open(file_path, 'rb'):
+                                pass
+                            return True
+                        except (PermissionError, IOError):
+                            continue
+                last_size = current_size
+            
+            # File size kept changing, but try to process anyway if accessible
+            try:
+                with open(file_path, 'rb'):
+                    pass
+                return True
+            except (PermissionError, IOError):
+                return False
+        except Exception as e:
+            logger.debug(f"Error checking file stability: {e}")
+            return False
+    
+    def _should_process(self, file_path):
+        """Check if file should be processed (not already processed or pending)."""
+        with self.processing_lock:
+            if file_path in self.processed_files:
+                return False
+            self.processed_files.add(file_path)
+        return True
     
     def on_created(self, event):
         """Called when a file is created."""
         if event.is_directory:
             return
         
-        # Wait a moment for file to be fully written
-        time.sleep(0.5)
-        
         file_path = event.src_path
+        filename = os.path.basename(file_path)
+        
+        # Skip temporary files (browsers often create .tmp files first)
+        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+            logger.debug(f"Skipping temporary file: {filename}")
+            return
         
         # Skip if already processed
-        with self.processing_lock:
-            if file_path in self.processed_files:
-                return
-            self.processed_files.add(file_path)
+        if not self._should_process(file_path):
+            return
         
-        self.process_file(file_path)
+        # Process in a separate thread to avoid blocking
+        threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
+    
+    def on_moved(self, event):
+        """Called when a file is moved/renamed (browsers often rename temp files)."""
+        if event.is_directory:
+            return
+        
+        dest_path = event.dest_path
+        filename = os.path.basename(dest_path)
+        
+        # Skip temporary files
+        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+            return
+        
+        # Skip if already processed
+        if not self._should_process(dest_path):
+            return
+        
+        # Process the renamed file
+        threading.Thread(target=self._process_file_delayed, args=(dest_path, 1.0), daemon=True).start()
     
     def on_modified(self, event):
         """Called when a file is modified (sometimes triggered on download completion)."""
@@ -224,22 +293,44 @@ class DownloadsHandler(FileSystemEventHandler):
             return
         
         file_path = event.src_path
+        filename = os.path.basename(file_path)
         
-        # Only process if file is complete (not still being written)
-        try:
-            # Check if file is accessible (not locked by another process)
-            with open(file_path, 'rb'):
-                pass
-        except (PermissionError, IOError):
-            # File is still being written, skip
+        # Skip temporary files
+        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
             return
         
-        # Skip if already processed
-        with self.processing_lock:
-            if file_path in self.processed_files:
-                return
-            self.processed_files.add(file_path)
+        # Track pending files (might be still downloading)
+        current_time = time.time()
+        with self.pending_lock:
+            if file_path in self.pending_files:
+                last_seen = self.pending_files[file_path]
+                # Only process if file hasn't been modified recently (likely complete)
+                if current_time - last_seen < 2.0:  # File modified less than 2 seconds ago
+                    self.pending_files[file_path] = current_time  # Update timestamp
+                    return  # Still downloading, wait
+            self.pending_files[file_path] = current_time
         
+        # Skip if already processed
+        if not self._should_process(file_path):
+            return
+        
+        # Process with delay to ensure file is complete
+        threading.Thread(target=self._process_file_delayed, args=(file_path, 1.5), daemon=True).start()
+    
+    def _process_file_delayed(self, file_path, initial_delay=1.0):
+        """Process file after a delay and file stability check."""
+        # Initial delay
+        time.sleep(initial_delay)
+        
+        # Wait for file to be stable
+        if not self._wait_for_file_stable(file_path, wait_seconds=2.0):
+            logger.warning(f"File not stable, skipping: {os.path.basename(file_path)}")
+            # Remove from processed set so it can be retried
+            with self.processing_lock:
+                self.processed_files.discard(file_path)
+            return
+        
+        # Process the file
         self.process_file(file_path)
     
     def process_file(self, file_path):
