@@ -334,21 +334,72 @@ def setup_tray_icon(observer):
 
 
 def get_downloads_folder():
-    """Get the user's Downloads folder path - platform-specific."""
+    """Get the user's Downloads folder path - platform-specific. Gets actual logged-in user's folder, not Administrator."""
     if SYSTEM == 'Windows':
-        # On Windows, get the actual Downloads folder
+        # First, try to get Downloads folder using standard method
+        downloads = None
         try:
             shell = win32com.client.Dispatch("WScript.Shell")
             downloads = shell.SpecialFolders("Downloads")
             if downloads and os.path.exists(downloads):
-                return downloads
+                # Check if we're running as Administrator and found Administrator's folder
+                # If so, try to find the actual logged-in user's folder
+                if "Administrator" in downloads:
+                    logger.debug("Running as Administrator, looking for actual user's Downloads folder...")
+                    downloads = None  # Continue to find actual user's folder
+                else:
+                    logger.info(f"Found Downloads folder: {downloads}")
+                    return downloads
         except:
             pass
         
-        # Fallback to default location
+        # If we didn't find a good folder (or we're Administrator), scan C:\Users for actual user folders
+        if downloads is None or "Administrator" in str(downloads):
+            try:
+                system_drive = os.environ.get('SystemDrive', 'C:')
+                users_dir = os.path.join(system_drive, 'Users')
+                if os.path.exists(users_dir):
+                    # System folders to exclude
+                    exclude = {'Administrator', 'Default', 'Default User', 'Public', 'All Users', '.NET v4.5', '.NET v4.5 Classic'}
+                    
+                    # Try to find user folders with Downloads
+                    user_folders = []
+                    for folder in os.listdir(users_dir):
+                        if folder in exclude:
+                            continue
+                        user_path = os.path.join(users_dir, folder)
+                        if not os.path.isdir(user_path):
+                            continue
+                        
+                        # Try English "Downloads"
+                        user_downloads = os.path.join(user_path, "Downloads")
+                        if os.path.exists(user_downloads):
+                            user_folders.append(user_downloads)
+                            continue
+                        
+                        # Try Swedish "Hämtade filer"
+                        user_downloads_sv = os.path.join(user_path, "Hämtade filer")
+                        if os.path.exists(user_downloads_sv):
+                            user_folders.append(user_downloads_sv)
+                    
+                    # If we found user folders, prefer the one that's not Administrator
+                    for user_dl in user_folders:
+                        if "Administrator" not in user_dl:
+                            logger.info(f"Found Downloads folder (actual user): {user_dl}")
+                            return user_dl
+                    
+                    # If only Administrator found, use it
+                    if user_folders:
+                        logger.info(f"Found Downloads folder: {user_folders[0]}")
+                        return user_folders[0]
+            except Exception as e:
+                logger.debug(f"Could not scan user profiles: {e}")
+        
+        # Fallback: Use current process user's Downloads
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.exists(downloads):
+            downloads = os.path.join(os.path.expanduser("~"), "Hämtade filer")  # Swedish Windows
     else:  # macOS
-        # On macOS, use the standard Downloads folder
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
     
     # Ensure it exists
