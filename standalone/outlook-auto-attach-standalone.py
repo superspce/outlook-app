@@ -235,75 +235,84 @@ class DownloadsHandler(FileSystemEventHandler):
     
     def on_created(self, event):
         """Called when a file is created."""
-        if event.is_directory:
-            return
-        
-        file_path = event.src_path
-        filename = os.path.basename(file_path)
-        
-        # Skip temporary files (browsers often create .tmp files first)
-        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
-            logger.debug(f"Skipping temporary file: {filename}")
-            return
-        
-        # Skip if already processed
-        if not self._should_process(file_path):
-            return
-        
-        # Process in a separate thread to avoid blocking
-        logger.info(f"File created event: {filename}")
-        threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
+        try:
+            if event.is_directory:
+                return
+            
+            file_path = event.src_path
+            filename = os.path.basename(file_path)
+            
+            # Skip temporary files (browsers often create .tmp files first)
+            if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+                logger.debug(f"Skipping temporary file: {filename}")
+                return
+            
+            # Skip if already processed
+            if not self._should_process(file_path):
+                return
+            
+            # Process in a separate thread to avoid blocking
+            logger.info(f"File created event: {filename}")
+            threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
+        except Exception as e:
+            logger.error(f"Error in on_created: {e}", exc_info=True)
     
     def on_moved(self, event):
         """Called when a file is moved/renamed (browsers often rename temp files)."""
-        if event.is_directory:
-            return
-        
-        dest_path = event.dest_path
-        filename = os.path.basename(dest_path)
-        
-        # Skip temporary files
-        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
-            return
-        
-        # Skip if already processed
-        if not self._should_process(dest_path):
-            return
-        
-        # Process the renamed file
-        logger.info(f"File moved/renamed event: {filename}")
-        threading.Thread(target=self._process_file_delayed, args=(dest_path, 2.0), daemon=True).start()
+        try:
+            if event.is_directory:
+                return
+            
+            dest_path = event.dest_path
+            filename = os.path.basename(dest_path)
+            
+            # Skip temporary files
+            if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+                return
+            
+            # Skip if already processed
+            if not self._should_process(dest_path):
+                return
+            
+            # Process the renamed file
+            logger.info(f"File moved/renamed event: {filename}")
+            threading.Thread(target=self._process_file_delayed, args=(dest_path, 2.0), daemon=True).start()
+        except Exception as e:
+            logger.error(f"Error in on_moved: {e}", exc_info=True)
     
     def on_modified(self, event):
         """Called when a file is modified (sometimes triggered on download completion)."""
-        if event.is_directory:
-            return
-        
-        file_path = event.src_path
-        filename = os.path.basename(file_path)
-        
-        # Skip temporary files
-        if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
-            return
-        
-        # Track pending files (might be still downloading)
-        current_time = time.time()
-        with self.pending_lock:
-            if file_path in self.pending_files:
-                last_seen = self.pending_files[file_path]
-                # Only process if file hasn't been modified recently (likely complete)
-                if current_time - last_seen < 2.0:  # File modified less than 2 seconds ago
-                    self.pending_files[file_path] = current_time  # Update timestamp
-                    return  # Still downloading, wait
-            self.pending_files[file_path] = current_time
-        
-        # Skip if already processed
-        if not self._should_process(file_path):
-            return
-        
-        # Process with delay to ensure file is complete
-        logger.debug(f"File modified event: {filename}")
-        threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
+        try:
+            if event.is_directory:
+                return
+            
+            file_path = event.src_path
+            filename = os.path.basename(file_path)
+            
+            # Skip temporary files
+            if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
+                return
+            
+            # Track pending files (might be still downloading)
+            current_time = time.time()
+            with self.pending_lock:
+                if file_path in self.pending_files:
+                    last_seen = self.pending_files[file_path]
+                    # Only process if file hasn't been modified recently (likely complete)
+                    if current_time - last_seen < 2.0:  # File modified less than 2 seconds ago
+                        self.pending_files[file_path] = current_time  # Update timestamp
+                        return  # Still downloading, wait
+                self.pending_files[file_path] = current_time
+            
+            # Skip if already processed
+            if not self._should_process(file_path):
+                return
+            
+            # Process with delay to ensure file is complete
+            logger.debug(f"File modified event: {filename}")
+            threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
+        except Exception as e:
+            logger.error(f"Error in on_modified: {e}", exc_info=True)
     
     def _process_file_delayed(self, file_path, initial_delay=2.0):
         """Process file after a delay to ensure it's complete."""
@@ -431,9 +440,11 @@ class DownloadsHandler(FileSystemEventHandler):
                         continue  # File is locked, skip
                     
                     # Process this file
-                    logger.info(f"Periodic scan found file: {filename}")
+                    logger.info(f"Periodic scan found unprocessed file: {filename}")
                     if self._should_process(file_path):
                         threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
+                    else:
+                        logger.debug(f"Periodic scan: file already processed: {filename}")
             except Exception as e:
                 logger.debug(f"Error during periodic scan: {e}")
         except Exception as e:
@@ -601,10 +612,24 @@ def main():
     
     try:
         # Keep the main thread alive and periodically scan for missed files
+        last_observer_check = time.time()
         while observer.is_alive():
             time.sleep(1)
+            
             # Periodic scan as fallback in case file system events are missed
-            event_handler.scan_for_new_files()
+            try:
+                event_handler.scan_for_new_files()
+            except Exception as e:
+                logger.error(f"Error in periodic scan: {e}", exc_info=True)
+            
+            # Log observer status periodically (for debugging)
+            current_time = time.time()
+            if current_time - last_observer_check > 30.0:
+                if observer.is_alive():
+                    logger.debug(f"Observer is running. Processed files count: {len(event_handler.processed_files)}")
+                else:
+                    logger.error("Observer stopped unexpectedly!")
+                last_observer_check = current_time
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
