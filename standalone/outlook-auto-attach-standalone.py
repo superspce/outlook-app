@@ -218,20 +218,57 @@ class DownloadsHandler(FileSystemEventHandler):
     
     def __init__(self, downloads_folder):
         super().__init__()
-        self.processed_files = set()
+        self.processed_files = {}  # file_path -> (mtime, processed_time)
         self.pending_files = {}  # file_path -> last_seen_time
         self.processing_lock = threading.Lock()
         self.pending_lock = threading.Lock()
         self.downloads_folder = downloads_folder
         self.last_scan_time = time.time()
     
+    def _get_file_signature(self, file_path):
+        """Get a unique signature for a file (path + modification time)."""
+        try:
+            if os.path.exists(file_path):
+                mtime = os.path.getmtime(file_path)
+                return (file_path, mtime)
+        except:
+            pass
+        return (file_path, None)
+    
     def _should_process(self, file_path):
-        """Check if file should be processed (not already processed or pending)."""
+        """Check if file should be processed (not already processed or pending). Uses file signature (path + mtime)."""
+        signature = self._get_file_signature(file_path)
         with self.processing_lock:
-            if file_path in self.processed_files:
+            # Check if this exact file (same path + same modification time) was already processed
+            if signature in self.processed_files:
                 return False
-            self.processed_files.add(file_path)
+            
+            # Clean up old entries for files that no longer exist or have been modified
+            keys_to_remove = []
+            for key in list(self.processed_files.keys()):
+                stored_path, stored_mtime = key
+                if not os.path.exists(stored_path):
+                    # File was deleted, remove from processed set
+                    keys_to_remove.append(key)
+                elif stored_path == file_path:
+                    # Same path but different mtime means it's a new file with same name
+                    keys_to_remove.append(key)
+            
+            for key in keys_to_remove:
+                del self.processed_files[key]
+            
+            # Mark this file as being processed
+            self.processed_files[signature] = (time.time(), signature[1])
         return True
+    
+    def _mark_as_not_processed(self, file_path):
+        """Remove file from processed set (in case processing failed)."""
+        signature = self._get_file_signature(file_path)
+        with self.processing_lock:
+            # Remove this signature and any old signatures for this path
+            keys_to_remove = [key for key in self.processed_files.keys() if key[0] == file_path]
+            for key in keys_to_remove:
+                del self.processed_files[key]
     
     def on_created(self, event):
         """Called when a file is created."""
@@ -322,8 +359,7 @@ class DownloadsHandler(FileSystemEventHandler):
         # Check if file still exists and can be opened
         if not os.path.exists(file_path):
             logger.debug(f"File no longer exists: {os.path.basename(file_path)}")
-            with self.processing_lock:
-                self.processed_files.discard(file_path)
+            self._mark_as_not_processed(file_path)
             return
         
         # Try to open file to ensure it's not locked
@@ -332,18 +368,16 @@ class DownloadsHandler(FileSystemEventHandler):
                 pass
         except (PermissionError, IOError) as e:
             logger.debug(f"File still locked, skipping: {os.path.basename(file_path)}")
-            with self.processing_lock:
-                self.processed_files.discard(file_path)
+            self._mark_as_not_processed(file_path)
             return
         
         # Process the file (only mark as processed after successful processing)
         try:
             self.process_file(file_path)
         except Exception as e:
-            logger.error(f"Error in process_file: {e}")
+            logger.error(f"Error in process_file for {os.path.basename(file_path)}: {e}", exc_info=True)
             # Remove from processed set so it can be retried
-            with self.processing_lock:
-                self.processed_files.discard(file_path)
+            self._mark_as_not_processed(file_path)
     
     def process_file(self, file_path):
         """Process a downloaded file."""
@@ -395,17 +429,20 @@ class DownloadsHandler(FileSystemEventHandler):
         """Periodic scan for files that might have been missed by file system events."""
         try:
             if not os.path.exists(self.downloads_folder):
+                logger.warning(f"Downloads folder does not exist: {self.downloads_folder}")
                 return
             
             current_time = time.time()
-            # Scan every 3 seconds (more aggressive to catch missed files)
-            if current_time - self.last_scan_time < 3.0:
+            # Scan every 2 seconds (very aggressive to catch missed files)
+            if current_time - self.last_scan_time < 2.0:
                 return
             
             self.last_scan_time = current_time
             
             try:
                 files = os.listdir(self.downloads_folder)
+                logger.debug(f"Periodic scan checking {len(files)} files in Downloads folder")
+                
                 for filename in files:
                     file_path = os.path.join(self.downloads_folder, filename)
                     
@@ -419,36 +456,55 @@ class DownloadsHandler(FileSystemEventHandler):
                     if not should_process_file(filename):
                         continue
                     
-                    # Check if already processed
+                    # Check if already processed (using file signature)
+                    signature = self._get_file_signature(file_path)
                     with self.processing_lock:
-                        if file_path in self.processed_files:
+                        if signature in self.processed_files:
+                            logger.debug(f"Periodic scan: file already in processed set: {filename}")
                             continue
+                        # Also check if there's an old entry for this path (different mtime = new file)
+                        old_entries = [key for key in self.processed_files.keys() if key[0] == file_path]
+                        for old_key in old_entries:
+                            # If file exists and has different mtime, it's a new file with same name
+                            if os.path.exists(file_path):
+                                try:
+                                    current_mtime = os.path.getmtime(file_path)
+                                    if old_key[1] != current_mtime:
+                                        # Different file with same name - remove old entry
+                                        del self.processed_files[old_key]
+                                        logger.debug(f"Periodic scan: found new file with same name, removed old entry: {filename}")
+                                except:
+                                    pass
                     
                     # Check file modification time (only process files older than 2 seconds - likely complete)
                     try:
                         file_mtime = os.path.getmtime(file_path)
                         if current_time - file_mtime < 2.0:
+                            logger.debug(f"Periodic scan: file too recent (downloading?): {filename}")
                             continue  # File too recent, might still be downloading
-                    except:
+                    except Exception as e:
+                        logger.debug(f"Periodic scan: error getting mtime for {filename}: {e}")
                         continue
                     
                     # Check if file is stable (not locked)
                     try:
                         with open(file_path, 'rb'):
                             pass
-                    except (PermissionError, IOError):
+                    except (PermissionError, IOError) as e:
+                        logger.debug(f"Periodic scan: file locked: {filename}")
                         continue  # File is locked, skip
                     
                     # Process this file
                     logger.info(f"Periodic scan found unprocessed file: {filename}")
                     if self._should_process(file_path):
+                        logger.info(f"Periodic scan: starting processing thread for {filename}")
                         threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
                     else:
-                        logger.debug(f"Periodic scan: file already processed: {filename}")
+                        logger.debug(f"Periodic scan: file marked as processed by _should_process: {filename}")
             except Exception as e:
-                logger.debug(f"Error during periodic scan: {e}")
+                logger.error(f"Error during periodic scan (listing files): {e}", exc_info=True)
         except Exception as e:
-            logger.debug(f"Error in scan_for_new_files: {e}")
+            logger.error(f"Error in scan_for_new_files: {e}", exc_info=True)
 
 
 def create_tray_icon():
@@ -496,13 +552,31 @@ def setup_tray_icon(observer):
         icon.stop()
     
     def show_log(icon, item):
-        if SYSTEM == 'Windows':
-            os.startfile(LOG_FILE)
-        else:  # macOS
-            subprocess.run(['open', LOG_FILE])
+        """Open the log file in default text editor."""
+        try:
+            if SYSTEM == 'Windows':
+                os.startfile(LOG_FILE)
+            else:  # macOS
+                subprocess.run(['open', LOG_FILE])
+        except Exception as e:
+            logger.error(f"Error opening log file: {e}")
+            # Fallback: open the folder
+            open_log_folder(icon, item)
+    
+    def open_log_folder(icon, item):
+        """Open the log file folder in File Explorer/Finder."""
+        try:
+            if SYSTEM == 'Windows':
+                # Open folder and select the log file
+                subprocess.run(['explorer', '/select,', LOG_FILE], check=False)
+            else:  # macOS
+                subprocess.run(['open', '-R', LOG_FILE], check=False)
+        except Exception as e:
+            logger.error(f"Error opening log folder: {e}")
     
     menu = pystray.Menu(
-        pystray.MenuItem("View Log", show_log),
+        pystray.MenuItem("View Log File", show_log),
+        pystray.MenuItem("Open Log Folder", open_log_folder),
         pystray.MenuItem("Quit", on_quit)
     )
     
@@ -626,6 +700,12 @@ def main():
             current_time = time.time()
             if current_time - last_observer_check > 30.0:
                 if observer.is_alive():
+                    # Clean up old processed file entries for files that no longer exist
+                    with event_handler.processing_lock:
+                        keys_to_remove = [key for key in event_handler.processed_files.keys() 
+                                        if not os.path.exists(key[0])]
+                        for key in keys_to_remove:
+                            del event_handler.processed_files[key]
                     logger.debug(f"Observer is running. Processed files count: {len(event_handler.processed_files)}")
                 else:
                     logger.error("Observer stopped unexpectedly!")
