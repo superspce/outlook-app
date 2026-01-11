@@ -692,11 +692,12 @@ def main():
         while observer.is_alive():
             time.sleep(1)
             
-            # Periodic scan as fallback in case file system events are missed
-            try:
-                event_handler.scan_for_new_files()
-            except Exception as e:
-                logger.error(f"Error in periodic scan: {e}", exc_info=True)
+            # Periodic scan disabled - file system events should handle all files
+            # Uncomment below if file system events are missing files:
+            # try:
+            #     event_handler.scan_for_new_files()
+            # except Exception as e:
+            #     logger.error(f"Error in periodic scan: {e}", exc_info=True)
             
             # Log observer status periodically (for debugging)
             current_time = time.time()
