@@ -223,7 +223,6 @@ class DownloadsHandler(FileSystemEventHandler):
         self.processing_lock = threading.Lock()
         self.pending_lock = threading.Lock()
         self.downloads_folder = downloads_folder
-        self.last_scan_time = time.time()
     
     def _get_file_signature(self, file_path):
         """Get a unique signature for a file (path + modification time)."""
@@ -319,39 +318,9 @@ class DownloadsHandler(FileSystemEventHandler):
     
     def on_modified(self, event):
         """Called when a file is modified (sometimes triggered on download completion)."""
-        try:
-            if event.is_directory:
-                return
-            
-            file_path = event.src_path
-            filename = os.path.basename(file_path)
-            
-            # Skip temporary files
-            if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
-                return
-            
-            # Skip if already processed (check BEFORE tracking as pending)
-            if not self._should_process(file_path):
-                return
-            
-            # Track pending files (might be still downloading)
-            current_time = time.time()
-            with self.pending_lock:
-                if file_path in self.pending_files:
-                    last_seen = self.pending_files[file_path]
-                    # Only process if file hasn't been modified recently (likely complete)
-                    if current_time - last_seen < 2.0:  # File modified less than 2 seconds ago
-                        self.pending_files[file_path] = current_time  # Update timestamp
-                        # Remove from processed set since we're not processing it yet
-                        self._mark_as_not_processed(file_path)
-                        return  # Still downloading, wait
-                self.pending_files[file_path] = current_time
-            
-            # Process with delay to ensure file is complete
-            logger.debug(f"File modified event: {filename}")
-            threading.Thread(target=self._process_file_delayed, args=(file_path, 2.0), daemon=True).start()
-        except Exception as e:
-            logger.error(f"Error in on_modified: {e}", exc_info=True)
+        # DISABLED: on_modified causes duplicates - it fires multiple times during download
+        # We rely on on_created and on_moved only
+        return
     
     def _process_file_delayed(self, file_path, initial_delay=2.0):
         """Process file after a delay to ensure it's complete."""
@@ -427,86 +396,8 @@ class DownloadsHandler(FileSystemEventHandler):
             logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
             raise  # Re-raise so caller can handle it
     
-    def scan_for_new_files(self):
-        """Periodic scan for files that might have been missed by file system events."""
-        try:
-            if not os.path.exists(self.downloads_folder):
-                logger.warning(f"Downloads folder does not exist: {self.downloads_folder}")
-                return
-            
-            current_time = time.time()
-            # Scan every 2 seconds (very aggressive to catch missed files)
-            if current_time - self.last_scan_time < 2.0:
-                return
-            
-            self.last_scan_time = current_time
-            
-            try:
-                files = os.listdir(self.downloads_folder)
-                logger.debug(f"Periodic scan checking {len(files)} files in Downloads folder")
-                
-                for filename in files:
-                    file_path = os.path.join(self.downloads_folder, filename)
-                    
-                    # Skip directories and temporary files
-                    if os.path.isdir(file_path):
-                        continue
-                    if filename.startswith('.') or filename.endswith('.tmp') or filename.endswith('.crdownload'):
-                        continue
-                    
-                    # Check if it's a file we should process
-                    if not should_process_file(filename):
-                        continue
-                    
-                    # Check if already processed (using file signature)
-                    signature = self._get_file_signature(file_path)
-                    with self.processing_lock:
-                        if signature in self.processed_files:
-                            logger.debug(f"Periodic scan: file already in processed set: {filename}")
-                            continue
-                        # Also check if there's an old entry for this path (different mtime = new file)
-                        old_entries = [key for key in self.processed_files.keys() if key[0] == file_path]
-                        for old_key in old_entries:
-                            # If file exists and has different mtime, it's a new file with same name
-                            if os.path.exists(file_path):
-                                try:
-                                    current_mtime = os.path.getmtime(file_path)
-                                    if old_key[1] != current_mtime:
-                                        # Different file with same name - remove old entry
-                                        del self.processed_files[old_key]
-                                        logger.debug(f"Periodic scan: found new file with same name, removed old entry: {filename}")
-                                except:
-                                    pass
-                    
-                    # Check file modification time (only process files older than 2 seconds - likely complete)
-                    try:
-                        file_mtime = os.path.getmtime(file_path)
-                        if current_time - file_mtime < 2.0:
-                            logger.debug(f"Periodic scan: file too recent (downloading?): {filename}")
-                            continue  # File too recent, might still be downloading
-                    except Exception as e:
-                        logger.debug(f"Periodic scan: error getting mtime for {filename}: {e}")
-                        continue
-                    
-                    # Check if file is stable (not locked)
-                    try:
-                        with open(file_path, 'rb'):
-                            pass
-                    except (PermissionError, IOError) as e:
-                        logger.debug(f"Periodic scan: file locked: {filename}")
-                        continue  # File is locked, skip
-                    
-                    # Process this file
-                    logger.info(f"Periodic scan found unprocessed file: {filename}")
-                    if self._should_process(file_path):
-                        logger.info(f"Periodic scan: starting processing thread for {filename}")
-                        threading.Thread(target=self._process_file_delayed, args=(file_path, 0.5), daemon=True).start()
-                    else:
-                        logger.debug(f"Periodic scan: file marked as processed by _should_process: {filename}")
-            except Exception as e:
-                logger.error(f"Error during periodic scan (listing files): {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error in scan_for_new_files: {e}", exc_info=True)
+    # Periodic scan REMOVED - it was processing old files in Downloads folder
+    # File system events (on_created, on_moved) are sufficient for detecting new downloads
 
 
 def create_tray_icon():
