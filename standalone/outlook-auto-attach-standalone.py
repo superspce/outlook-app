@@ -61,10 +61,11 @@ def should_process_file(filename):
     
     filename_lower = filename.lower()
     
-    # Only check for Orderbekräftelse
+    # Check for Orderbekräftelse or Inköpsorder
     has_orderbekraeftelse = 'orderbekräftelse' in filename_lower or 'orderbekr' in filename_lower
+    has_inkopsorder = 'inköpsorder' in filename_lower or 'inkopsorder' in filename_lower
     
-    return has_orderbekraeftelse
+    return has_orderbekraeftelse or has_inkopsorder
 
 
 def create_unique_file_copy(original_path):
@@ -91,8 +92,15 @@ def create_unique_file_copy(original_path):
         timestamp = now.strftime("%Y%m%d-%H%M%S")
         microseconds = now.strftime("%f")
         
-        # All files are Orderbekräftelse (since we only process those)
-        unique_name = f"Orderbekräftelse-{timestamp}-{microseconds}{file_extension}"
+        # Determine file type based on original filename
+        original_name_lower = original_name.lower()
+        if 'inköpsorder' in original_name_lower or 'inkopsorder' in original_name_lower:
+            file_type = "Inköpsorder"
+        else:
+            # Default to Orderbekräftelse
+            file_type = "Orderbekräftelse"
+        
+        unique_name = f"{file_type}-{timestamp}-{microseconds}{file_extension}"
         unique_path = os.path.join(businessnxtdocs_dir, unique_name)
         
         try:
